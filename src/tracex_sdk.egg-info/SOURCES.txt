@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+src/tracex/__init__.py
+src/tracex_sdk.egg-info/PKG-INFO
+src/tracex_sdk.egg-info/SOURCES.txt
+src/tracex_sdk.egg-info/dependency_links.txt
+src/tracex_sdk.egg-info/requires.txt
+src/tracex_sdk.egg-info/top_level.txt

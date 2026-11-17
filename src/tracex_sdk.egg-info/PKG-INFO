@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: tracex-sdk
+Version: 0.1.0
+Summary: Official Python SDK for TraceX Error Tracking & Monitoring
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
