@@ -1,43 +1,59 @@
+from __future__ import annotations
+
 import asyncio
 import sys
 import threading
 from types import TracebackType
-from typing import Callable, Optional, Any
+from typing import Any, Callable, Dict, List, Optional, Tuple, Type
 
-CaptureCallback = Callable[[Optional[type], Optional[BaseException], Optional[TracebackType]], None]
+ExceptionCallback = Callable[
+    [Optional[Type[BaseException]], Optional[BaseException], Optional[TracebackType]],
+    Any,
+]
+
+_IGNORED_EXCEPTIONS: Tuple[Type[BaseException], ...] = (KeyboardInterrupt, SystemExit)
 
 
-class ExceptionHooksManager:
-    def __init__(self, on_exception: CaptureCallback) -> None:
+class GlobalHookManager:
+    def __init__(self, on_exception: ExceptionCallback) -> None:
         self._on_exception = on_exception
         self._installed = False
-        self._original_sys_hook = sys.excepthook
-        self._original_threading_hook = threading.excepthook
+        self._original_sys_hook: Any = None
+        self._original_threading_hook: Any = None
+        self._tracked_loops: List[Tuple[asyncio.AbstractEventLoop, Any]] = []
 
     def install(self) -> None:
         if self._installed:
             return
-
         self._original_sys_hook = sys.excepthook
-        self._original_threading_hook = threading.excepthook
+        sys.excepthook = self._sys_excepthook
 
-        def _sys_excepthook(
-            exc_type: type,
-            exc_value: BaseException,
-            exc_tb: Optional[TracebackType],
-        ) -> None:
-            if not issubclass(exc_type, KeyboardInterrupt):
-                self._on_exception(exc_type, exc_value, exc_tb)
-            self._original_sys_hook(exc_type, exc_value, exc_tb)
+        if hasattr(threading, "excepthook"):
+            self._original_threading_hook = threading.excepthook
+            threading.excepthook = self._threading_excepthook
 
-        def _threading_excepthook(args: threading.ExceptHookArgs) -> None:
-            if args.exc_type is not None and not issubclass(args.exc_type, SystemExit):
-                self._on_exception(args.exc_type, args.exc_value, args.exc_traceback)
-            self._original_threading_hook(args)
-
-        sys.excepthook = _sys_excepthook
-        threading.excepthook = _threading_excepthook
+        self.attach_asyncio_loop()
         self._installed = True
+
+    def uninstall(self) -> None:
+        if not self._installed:
+            return
+        if self._original_sys_hook is not None:
+            sys.excepthook = self._original_sys_hook
+            self._original_sys_hook = None
+
+        if hasattr(threading, "excepthook") and self._original_threading_hook is not None:
+            threading.excepthook = self._original_threading_hook
+            self._original_threading_hook = None
+
+        for loop, prev_handler in self._tracked_loops:
+            try:
+                if not loop.is_closed():
+                    loop.set_exception_handler(prev_handler)
+            except Exception:
+                pass
+        self._tracked_loops.clear()
+        self._installed = False
 
     def attach_asyncio_loop(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
         target_loop = loop
@@ -47,25 +63,50 @@ class ExceptionHooksManager:
             except RuntimeError:
                 return
 
-        previous_handler = target_loop.get_exception_handler()
+        if any(tracked is target_loop for tracked, _ in self._tracked_loops):
+            return
 
-        def _async_exception_handler(
-            current_loop: asyncio.AbstractEventLoop,
-            context: dict[str, Any],
+        previous_handler = target_loop.get_exception_handler()
+        self._tracked_loops.append((target_loop, previous_handler))
+
+        def _asyncio_handler(
+            active_loop: asyncio.AbstractEventLoop, context: Dict[str, Any]
         ) -> None:
             exc = context.get("exception")
-            if isinstance(exc, BaseException):
-                self._on_exception(type(exc), exc, exc.__traceback__)
+            if isinstance(exc, BaseException) and not isinstance(exc, _IGNORED_EXCEPTIONS):
+                try:
+                    self._on_exception(type(exc), exc, exc.__traceback__)
+                except Exception:
+                    pass
             if previous_handler is not None:
-                previous_handler(current_loop, context)
+                previous_handler(active_loop, context)
             else:
-                current_loop.default_exception_handler(context)
+                active_loop.default_exception_handler(context)
 
-        target_loop.set_exception_handler(_async_exception_handler)
+        target_loop.set_exception_handler(_asyncio_handler)
 
-    def uninstall(self) -> None:
-        if not self._installed:
-            return
-        sys.excepthook = self._original_sys_hook
-        threading.excepthook = self._original_threading_hook
-        self._installed = False
+    def _sys_excepthook(
+        self,
+        exc_type: Type[BaseException],
+        exc_value: BaseException,
+        exc_tb: Optional[TracebackType],
+    ) -> None:
+        if not issubclass(exc_type, _IGNORED_EXCEPTIONS):
+            try:
+                self._on_exception(exc_type, exc_value, exc_tb)
+            except Exception:
+                pass
+        if self._original_sys_hook is not None:
+            self._original_sys_hook(exc_type, exc_value, exc_tb)
+
+    def _threading_excepthook(self, args: Any) -> None:
+        exc_type = getattr(args, "exc_type", None)
+        exc_value = getattr(args, "exc_value", None)
+        exc_tb = getattr(args, "exc_traceback", None)
+        if exc_type is not None and not issubclass(exc_type, _IGNORED_EXCEPTIONS):
+            try:
+                self._on_exception(exc_type, exc_value, exc_tb)
+            except Exception:
+                pass
+        if self._original_threading_hook is not None:
+            self._original_threading_hook(args)

@@ -1,26 +1,32 @@
-from typing import Optional, Dict, Any
-from .client import Client, Hub
+from __future__ import annotations
 
-__version__ = "0.1.0"
-__all__ = ["init", "capture_exception", "Client", "Hub"]
+from typing import Any, Dict, Optional
+
+from tracex.client import Client, DEFAULT_ENDPOINT, Hub
+
+__version__ = "1.0.0"
+__all__ = ["init", "capture_exception", "Client", "Hub", "__version__"]
 
 
 def init(
     project_key: str,
-    app_version: str = "0.1.0",
+    endpoint: str = DEFAULT_ENDPOINT,
     environment: str = "production",
-    dsn: str = "http://localhost:8000/api/v1/crashes",
+    app_version: str = "1.0.0",
+    max_breadcrumbs: int = 50,
     install_hooks: bool = True,
 ) -> Client:
     client = Client(
         project_key=project_key,
-        app_version=app_version,
+        endpoint=endpoint,
         environment=environment,
-        dsn=dsn,
+        app_version=app_version,
+        max_breadcrumbs=max_breadcrumbs,
+        install_hooks=install_hooks,
     )
-    Hub.get_current().bind_client(client, install_hooks=install_hooks)
+    Hub.current().bind_client(client)
     return client
 
 
 def capture_exception(exception: Optional[BaseException] = None) -> Optional[Dict[str, Any]]:
-    return Hub.get_current().capture_exception(exception)
+    return Hub.current().capture_exception(exception)
