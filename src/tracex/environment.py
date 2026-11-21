@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 from dataclasses import asdict, dataclass
 import os
 import platform
@@ -9,6 +8,36 @@ import socket
 from typing import Any, Dict, Optional
 
 _STATIC_CACHE: Optional[Dict[str, str]] = None
+
+if os.name == "nt":
+    from ctypes import wintypes
+
+    class _PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _psapi = ctypes.WinDLL("psapi", use_last_error=True)
+
+    _k32.GetCurrentProcess.argtypes = []
+    _k32.GetCurrentProcess.restype = wintypes.HANDLE
+
+    _psapi.GetProcessMemoryInfo.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(_PROCESS_MEMORY_COUNTERS),
+        wintypes.DWORD,
+    ]
+    _psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
 
 
 @dataclass
@@ -51,37 +80,10 @@ def _get_static_env() -> Dict[str, str]:
 def _get_process_ram_mb() -> float:
     if os.name == "nt":
         try:
-            class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
-                _fields_ = [
-                    ("cb", wintypes.DWORD),
-                    ("PageFaultCount", wintypes.DWORD),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t),
-                ]
-
-            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            psapi = ctypes.WinDLL("psapi", use_last_error=True)
-
-            k32.GetCurrentProcess.argtypes = []
-            k32.GetCurrentProcess.restype = wintypes.HANDLE
-
-            psapi.GetProcessMemoryInfo.argtypes = [
-                wintypes.HANDLE,
-                ctypes.POINTER(PROCESS_MEMORY_COUNTERS),
-                wintypes.DWORD,
-            ]
-            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
-
-            counters = PROCESS_MEMORY_COUNTERS()
-            counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
-            handle = k32.GetCurrentProcess()
-            if psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
+            counters = _PROCESS_MEMORY_COUNTERS()
+            counters.cb = ctypes.sizeof(_PROCESS_MEMORY_COUNTERS)
+            handle = _k32.GetCurrentProcess()
+            if _psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb):
                 return float(round(int(counters.WorkingSetSize) / (1024 * 1024), 2))
         except Exception:
             return 0.0

@@ -54,7 +54,7 @@ def normalize_exception(
 ) -> ExceptionDto:
     resolved_type = exc_type or (type(exc_value) if exc_value is not None else None)
     error_type = resolved_type.__name__ if resolved_type is not None else "UnknownError"
-    message = _safe_str(exc_value)
+    message = _safe_str(exc_value) or error_type
     resolved_tb = exc_tb or getattr(exc_value, "__traceback__", None)
 
     frames: List[StackFrameDto] = []

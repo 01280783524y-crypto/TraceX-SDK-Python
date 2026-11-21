@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from datetime import datetime, timezone
 import sys
@@ -11,7 +12,7 @@ from tracex.environment import collect_environment
 from tracex.hooks import GlobalHookManager
 from tracex.stacktrace import normalize_exception
 
-DEFAULT_ENDPOINT = "https://api.tracex.io/api/v1/crashes"
+DEFAULT_ENDPOINT = "https://tracex-edge-ingest.kareemadel10110.workers.dev/api/v1/crashes"
 MAX_CAPTURED_EVENTS = 100
 
 
@@ -46,6 +47,9 @@ class Client:
     def captured_events(self) -> List[Dict[str, Any]]:
         with self._lock:
             return list(self._captured_events)
+
+    def attach_asyncio_loop(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+        self._hook_manager.attach_asyncio_loop(loop)
 
     def build_crash_payload(
         self,
@@ -131,6 +135,12 @@ class Hub:
         if active is None:
             return None
         return active.capture_exception(exception)
+
+    def attach_asyncio_loop(self, loop: Optional[asyncio.AbstractEventLoop] = None) -> None:
+        with self._lock:
+            active = self._client
+        if active is not None:
+            active.attach_asyncio_loop(loop)
 
     def reset(self) -> None:
         self.bind_client(None)
